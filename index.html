@@ -226,7 +226,6 @@ function draw() {
     filter: f => visible.has(typeOf(f)),
     style: styleOf,
     onEachFeature: (f, layer) => {
-      layer.bindPopup(() => popupHtml(f), { maxWidth: 320 });
       layer.on('mouseover', () => layer.setStyle({ weight: 2.5, color: '#000' }));
       layer.on('mouseout', () => geoLayer.resetStyle(layer));
       const key = f.properties[CONFIG.LABEL_FIELD];
@@ -303,8 +302,36 @@ function oqhPopupHtml(f) {
     if (isEmpty(v) || HIDE_FIELDS.includes(k)) continue;
     rows += `<tr><td>${esc(FIELD_LABELS[k] || k)}</td><td>${esc(k === CONFIG.AREA_FIELD ? fmt(v, 1) : v)}</td></tr>`;
   }
-  return `<div class="popup-title">Ô quy hoạch ${esc(p[CONFIG.OQH_LABEL_FIELD])}</div><table class="popup-table">${rows}</table>`;
+  const key = p[CONFIG.OQH_LABEL_FIELD];
+  const title = !isEmpty(key) ? `Ô quy hoạch ${esc(key)}` : `Ô quy hoạch · ${esc(typeOf(f))}`;
+  return `<div class="popup-title">${title}</div><table class="popup-table">${rows}</table>`;
 }
+
+/* ===================== BẤM VÀO BẢN ĐỒ: THÔNG TIN THEO ĐIỂM ===================== */
+// Điểm (x = kinh độ, y = vĩ độ) có nằm trong hình học (Polygon/MultiPolygon, có lỗ) không
+function pointInGeom(geom, x, y) {
+  const ringHas = r => {
+    let c = false;
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const [xi, yi] = r[i], [xj, yj] = r[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+  const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+  return polys.some(poly => ringHas(poly[0]) && !poly.slice(1).some(ringHas));
+}
+const lotAt = ll => (showLots ? data.features.find(f => visible.has(typeOf(f)) && pointInGeom(f.geometry, ll.lng, ll.lat)) : null);
+const blockAt = ll => (oqh && showOqh ? oqh.features.find(f => pointInGeom(f.geometry, ll.lng, ll.lat)) : null);
+function openInfo(ll, parts) {
+  if (!parts.length) return;
+  L.popup({ maxWidth: 340, maxHeight: 380 }).setLatLng(ll).setContent(parts.join('<hr style="border:0;border-top:1px solid #d5dae0;margin:8px 0">')).openOn(map);
+}
+// Bấm vào bất kỳ điểm nào trên một polygon (ô đất và/hoặc ô quy hoạch) đều hiện thông tin của polygon đó
+map.on('click', e => {
+  const lot = lotAt(e.latlng), block = blockAt(e.latlng);
+  openInfo(e.latlng, [lot && popupHtml(lot), block && oqhPopupHtml(block)].filter(Boolean));
+});
 
 function initOqh() {
   oqh.features.forEach(f => {
@@ -414,7 +441,8 @@ function gotoFeature(f) {
   const layer = geoLayer.getLayers().find(l => l.feature === f);
   if (!layer) return;
   map.fitBounds(layer.getBounds(), { maxZoom: 20, padding: [60, 60] });
-  layer.openPopup();
+  const c = layer.getBounds().getCenter(), block = blockAt(c);
+  openInfo(c, [popupHtml(f), block && oqhPopupHtml(block)].filter(Boolean));
   if (window.innerWidth <= 700) document.getElementById('panel').classList.remove('open');
 }
 

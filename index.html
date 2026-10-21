@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGIS Quy hoạch</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2933; --muted: #6b7785; --line: #dde2e8; --accent: #1f6feb;
+    --panel-w: 320px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1f24; --fg: #e6e9ed; --muted: #9aa5b1; --line: #343b44; --accent: #58a6ff; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+  #app { display: flex; height: 100%; }
+  #panel { width: var(--panel-w); flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg); z-index: 1000; }
+  #panel header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+  #panel h1 { margin: 0; font-size: 16px; font-weight: 650; }
+  #panel .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #panel .body { overflow-y: auto; padding: 12px 16px 16px; flex: 1; }
+  .sec { margin-bottom: 18px; }
+  .sec h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  #search { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+  #search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  #results { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
+  #results li { padding: 5px 8px; border-radius: 5px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  #results li:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  #results small { color: var(--muted); }
+  .legend-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
+  .legend-row input { margin: 0; }
+  .swatch { width: 18px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,.35); flex: none; }
+  .legend-row .name { flex: 1; }
+  .legend-row .meta { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  .legend-actions { display: flex; gap: 10px; margin-top: 6px; }
+  .link { background: none; border: 0; color: var(--accent); padding: 0; font: inherit; cursor: pointer; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { flex: 1; }
+  input[type=range] { flex: 1; }
+  .stat { display: flex; justify-content: space-between; padding: 3px 0; }
+  .stat span:last-child { font-variant-numeric: tabular-nums; }
+  #map { flex: 1; min-width: 0; position: relative; z-index: 0; }
+  #toggle { display: none; }
+  .lot-label { background: transparent; border: 0; box-shadow: none; padding: 0; white-space: nowrap; text-align: center; line-height: 14px; font-size: 10px; font-weight: 600; color: #111; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; }
+  .lot-label:before { display: none; }
+  .popup-table { border-collapse: collapse; font-size: 13px; }
+  .popup-table td { padding: 3px 6px; border-bottom: 1px solid #e5e8ec; vertical-align: top; }
+  .popup-table td:first-child { color: #6b7785; padding-right: 12px; white-space: nowrap; }
+  .popup-title { font-weight: 650; font-size: 14px; margin-bottom: 4px; }
+  @media (max-width: 700px) {
+    #app { display: block; position: relative; }
+    #panel { position: absolute; inset: 0 auto 0 0; width: min(88vw, 340px); transform: translateX(-100%); transition: transform .2s; }
+    #panel.open { transform: none; }
+    #map { position: absolute; inset: 0; }
+    #toggle { display: block; position: absolute; top: 10px; left: 56px; z-index: 900; padding: 8px 12px; border: 0; border-radius: 6px; background: var(--bg); color: var(--fg); box-shadow: 0 1px 6px rgba(0,0,0,.35); font: inherit; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <header>
+      <h1>Bản đồ quy hoạch</h1>
+      <div class="sub" id="subtitle">Đang tải dữ liệu…</div>
+    </header>
+    <div class="body">
+      <div class="sec">
+        <h2>Tìm ô đất</h2>
+        <input id="search" type="search" placeholder="Nhập ký hiệu lô, ví dụ LK02-10" autocomplete="off">
+        <ul id="results"></ul>
+      </div>
+      <div class="sec">
+        <h2>Chú giải (loại đất)</h2>
+        <div id="legend"></div>
+        <div class="legend-actions">
+          <button class="link" id="allOn">Bật tất cả</button>
+          <button class="link" id="allOff">Tắt tất cả</button>
+        </div>
+      </div>
+      <div class="sec">
+        <h2>Hiển thị</h2>
+        <div class="row"><label for="opacity">Độ đậm màu tô</label><input id="opacity" type="range" min="0" max="100" value="70"></div>
+        <div class="row"><input id="showLabels" type="checkbox" checked><label for="showLabels">Nhãn ký hiệu lô (khi phóng to)</label></div>
+      </div>
+      <div class="sec">
+        <h2>Thống kê đang hiển thị</h2>
+        <div class="stat"><span>Số ô đất</span><span id="statCount">–</span></div>
+        <div class="stat"><span>Tổng diện tích</span><span id="statArea">–</span></div>
+      </div>
+    </div>
+  </aside>
+  <div id="map"></div>
+  <button id="toggle" aria-label="Mở bảng điều khiển">☰ Chú giải</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Dự phòng: dữ liệu nhúng sẵn, dùng khi mở index.html trực tiếp (không qua server) -->
+<script src="data/quyhoach.js"></script>
+<script>
+/* ===================== CẤU HÌNH ===================== */
+const CONFIG = {
+  DATA_URL: 'data/quyhoach.geojson',
+  // Cột loại đất. Các cột chucNangSuDungDatMuc1/2/3 trong file đang rỗng nên dùng phanLoai.
+  // Nếu sau này điền thêm, đặt chúng lên đầu danh sách (mức chi tiết nhất trước).
+  TYPE_FIELDS: ['chucNangSuDungDatMuc3', 'chucNangSuDungDatMuc2', 'chucNangSuDungDatMuc1', 'phanLoai'],
+  LABEL_FIELD: 'kyHieuLoDat',
+  SEARCH_FIELDS: ['kyHieuLoDat', 'tenCongTrinhTrenDat', 'tenDoiTuong'],
+  STATUS_FIELD: 'trangThaiQuyHoach',   // ô khác "Quy hoạch" sẽ vẽ viền nét đứt
+  AREA_FIELD: 'dienTich',              // m2; nếu rỗng dùng Shape_Area
+  LABEL_MIN_ZOOM: 19,
+  CENTER: [21.2385, 105.4245], ZOOM: 16
+};
+
+// Tên hiển thị trong popup. Cột không có ở đây sẽ dùng tên gốc; cột để null/rỗng sẽ ẩn.
+const FIELD_LABELS = {
+  kyHieuLoDat: 'Ký hiệu lô đất', dienTich: 'Diện tích (m²)', matDoXayDung: 'Mật độ xây dựng (%)',
+  tangCaoXayDung: 'Tầng cao (tầng)', heSoSuDungDat: 'Hệ số sử dụng đất (lần)',
+  trangThaiQuyHoach: 'Trạng thái', tenCongTrinhTrenDat: 'Công trình trên đất', tenDoiTuong: 'Tên đối tượng',
+  danSo: 'Dân số', ghiChu: 'Ghi chú', maDoiTuong: 'Mã đối tượng'
+};
+const HIDE_FIELDS = ['OBJECTID', 'Shape_Length', 'Shape_Area', 'phanLoai',
+  'chucNangSuDungDatMuc1', 'chucNangSuDungDatMuc2', 'chucNangSuDungDatMuc3', 'maThongTinQH', 'maHoSoQH'];
+
+// Màu theo loại đất. Chỉnh cho khớp chú giải ArcGIS Pro: 'tên loại đất': '#RRGGBB'
+// Loại nào chưa khai báo sẽ tự lấy màu từ PALETTE.
+const COLOR_OVERRIDE = {
+  'Đất nhà ở liền kề': '#f6c667',
+  'Đất nhà ở xã hội': '#e8833a',
+  'Đất cây xanh sử dụng công cộng': '#6dbb5a',
+  'Đất văn hóa': '#c58bd6',
+  'Đường giao thông': '#c9ced6'
+};
+const PALETTE = ['#ffe66d','#90e0ef','#ff9aa2','#adb5bd','#b185db','#4895ef','#e9d8a6','#ffb703','#8ecae6','#a7c957'];
+
+/* ===================== BIẾN CHUNG ===================== */
+let data = null, geoLayer = null, labelLayer = L.layerGroup();
+const CLASSES = {};          // tên loại đất -> {color, count, area}
+const visible = new Set();   // các loại đất đang bật
+let fillOpacity = 0.7;
+let userMoved = false;       // true khi người dùng đã tự điều khiển bản đồ
+const layerByKey = new Map();// ký hiệu lô -> layer (để tìm kiếm)
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const isEmpty = v => v === null || v === undefined || String(v).trim() === '';
+const fmt = (n, d = 0) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: d });
+
+const typeOf = f => {
+  for (const k of CONFIG.TYPE_FIELDS) { const v = f.properties[k]; if (!isEmpty(v)) return String(v).trim(); }
+  return 'Chưa xác định';
+};
+const areaOf = f => {
+  const a = f.properties[CONFIG.AREA_FIELD];
+  if (!isEmpty(a)) return Number(a);
+  const s = f.properties.Shape_Area;
+  return isEmpty(s) ? 0 : Number(s);
+};
+const colorOf = f => (CLASSES[typeOf(f)] || { color: '#cccccc' }).color;
+
+/* ===================== BẢN ĐỒ ===================== */
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 21, maxNativeZoom: 19, attribution: '© OpenStreetMap'
+});
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  // Esri chưa có ảnh ở zoom >= 18 tại nhiều vùng nông thôn ("Map data not yet available"),
+  // nên chỉ xin ảnh tới zoom 17 rồi phóng to ảnh khi zoom gần hơn.
+  maxZoom: 21, maxNativeZoom: 17, attribution: 'Ảnh: Esri, Maxar, Earthstar Geographics'
+});
+const map = L.map('map', { center: CONFIG.CENTER, zoom: CONFIG.ZOOM, layers: [osm], maxZoom: 21, zoomSnap: 0.25 });
+L.control.layers({ 'Bản đồ đường': osm, 'Ảnh vệ tinh': sat }, null, { position: 'topright' }).addTo(map);
+L.control.scale({ imperial: false }).addTo(map);
+
+/* ===================== VẼ DỮ LIỆU ===================== */
+function styleOf(f) {
+  const dashed = !isEmpty(f.properties[CONFIG.STATUS_FIELD]) && f.properties[CONFIG.STATUS_FIELD] !== 'Quy hoạch';
+  return { color: '#37414d', weight: 1, dashArray: dashed ? '4 3' : null, fillColor: colorOf(f), fillOpacity };
+}
+
+function popupHtml(f) {
+  const p = f.properties;
+  const area = areaOf(f);
+  let rows = `<tr><td>Loại đất</td><td><b>${esc(typeOf(f))}</b></td></tr>`;
+  for (const [k, v] of Object.entries(p)) {
+    if (isEmpty(v) || HIDE_FIELDS.includes(k)) continue;
+    let val = v;
+    if (k === CONFIG.AREA_FIELD) val = fmt(v, 1);
+    rows += `<tr><td>${esc(FIELD_LABELS[k] || k)}</td><td>${esc(val)}</td></tr>`;
+  }
+  if (isEmpty(p[CONFIG.AREA_FIELD]) && area) rows += `<tr><td>Diện tích (tính)</td><td>${fmt(area, 1)} m²</td></tr>`;
+  const title = !isEmpty(p[CONFIG.LABEL_FIELD]) ? esc(p[CONFIG.LABEL_FIELD]) : esc(typeOf(f));
+  return `<div class="popup-title">${title}</div><table class="popup-table">${rows}</table>`;
+}
+
+function draw() {
+  if (geoLayer) map.removeLayer(geoLayer);
+  labelLayer.clearLayers();
+  layerByKey.clear();
+  geoLayer = L.geoJSON(data, {
+    filter: f => visible.has(typeOf(f)),
+    style: styleOf,
+    onEachFeature: (f, layer) => {
+      layer.bindPopup(() => popupHtml(f), { maxWidth: 320 });
+      layer.on('mouseover', () => layer.setStyle({ weight: 2.5, color: '#000' }));
+      layer.on('mouseout', () => geoLayer.resetStyle(layer));
+      const key = f.properties[CONFIG.LABEL_FIELD];
+      if (!isEmpty(key)) {
+        layerByKey.set(String(key), layer);
+        const c = layer.getBounds().getCenter();
+        labelLayer.addLayer(L.marker(c, { interactive: false, icon: L.divIcon({ className: 'lot-label', html: esc(key), iconSize: [64, 14], iconAnchor: [32, 7] }) }));
+      }
+    }
+  }).addTo(map);
+  updateLabels();
+  updateStats();
+}
+
+function updateLabels() {
+  const want = document.getElementById('showLabels').checked && map.getZoom() >= CONFIG.LABEL_MIN_ZOOM;
+  if (want && !map.hasLayer(labelLayer)) labelLayer.addTo(map);
+  if (!want && map.hasLayer(labelLayer)) map.removeLayer(labelLayer);
+}
+
+function updateStats() {
+  let n = 0, a = 0;
+  data.features.forEach(f => { if (visible.has(typeOf(f))) { n++; a += areaOf(f); } });
+  document.getElementById('statCount').textContent = fmt(n);
+  document.getElementById('statArea').textContent = a >= 10000 ? `${fmt(a / 10000, 2)} ha` : `${fmt(a, 0)} m²`;
+}
+
+/* ===================== CHÚ GIẢI ===================== */
+function initClasses() {
+  const order = [];
+  data.features.forEach(f => {
+    const t = typeOf(f);
+    if (!CLASSES[t]) { CLASSES[t] = { name: t, color: null, count: 0, area: 0 }; order.push(t); }
+    CLASSES[t].count++; CLASSES[t].area += areaOf(f);
+  });
+  // Sắp xếp: loại có nhiều ô nhất lên trước; "Chưa xác định" xuống cuối
+  order.sort((a, b) => (a === 'Chưa xác định') - (b === 'Chưa xác định') || CLASSES[b].count - CLASSES[a].count);
+  let i = 0;
+  order.forEach(t => {
+    CLASSES[t].color = COLOR_OVERRIDE[t] || (t === 'Chưa xác định' ? '#cccccc' : PALETTE[i++ % PALETTE.length]);
+    visible.add(t);
+  });
+  CLASSES.__order = order;
+}
+
+function buildLegend() {
+  const box = document.getElementById('legend');
+  box.innerHTML = '';
+  CLASSES.__order.forEach(t => {
+    const c = CLASSES[t];
+    const row = document.createElement('label');
+    row.className = 'legend-row';
+    const areaTxt = c.area >= 10000 ? `${fmt(c.area / 10000, 2)} ha` : `${fmt(c.area, 0)} m²`;
+    row.innerHTML = `<input type="checkbox" checked><span class="swatch" style="background:${c.color}"></span>
+      <span class="name">${esc(t)}</span><span class="meta">${c.count} ô${c.area ? ' · ' + areaTxt : ''}</span>`;
+    row.querySelector('input').addEventListener('change', e => {
+      e.target.checked ? visible.add(t) : visible.delete(t);
+      draw();
+    });
+    box.appendChild(row);
+  });
+}
+
+function setAll(on) {
+  CLASSES.__order.forEach(t => on ? visible.add(t) : visible.delete(t));
+  document.querySelectorAll('#legend input').forEach(i => i.checked = on);
+  draw();
+}
+
+/* ===================== TÌM KIẾM ===================== */
+const norm = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
+function runSearch(q) {
+  const ul = document.getElementById('results');
+  ul.innerHTML = '';
+  q = norm(q.trim());
+  if (!q) return;
+  const hits = data.features.filter(f => CONFIG.SEARCH_FIELDS.some(k => !isEmpty(f.properties[k]) && norm(f.properties[k]).includes(q))).slice(0, 30);
+  if (!hits.length) { ul.innerHTML = '<li><small>Không tìm thấy</small></li>'; return; }
+  hits.forEach(f => {
+    const li = document.createElement('li');
+    const name = CONFIG.SEARCH_FIELDS.map(k => f.properties[k]).find(v => !isEmpty(v));
+    li.innerHTML = `<span>${esc(name)}</span><small>${esc(typeOf(f))}</small>`;
+    li.addEventListener('click', () => gotoFeature(f));
+    ul.appendChild(li);
+  });
+}
+function gotoFeature(f) {
+  userMoved = true;
+  const t = typeOf(f);
+  if (!visible.has(t)) { visible.add(t); document.querySelectorAll('#legend input').forEach((cb, i) => { if (CLASSES.__order[i] === t) cb.checked = true; }); draw(); }
+  const layer = geoLayer.getLayers().find(l => l.feature === f);
+  if (!layer) return;
+  map.fitBounds(layer.getBounds(), { maxZoom: 20, padding: [60, 60] });
+  layer.openPopup();
+  if (window.innerWidth <= 700) document.getElementById('panel').classList.remove('open');
+}
+
+/* ===================== KHỞI ĐỘNG ===================== */
+function start(d) {
+  data = d;
+  initClasses();
+  buildLegend();
+  draw();
+  // Chỉ zoom vừa khung khi bản đồ đã có kích thước thật (tab/pane ẩn lúc tải sẽ có kích thước 0)
+  const mapEl = document.getElementById('map');
+  const fit = () => { map.invalidateSize(); map.fitBounds(geoLayer.getBounds(), { padding: [30, 30], animate: false }); };
+  // Khung bản đồ có thể đổi kích thước sau khi tải (bố cục, pane mở ra...): zoom lại cho vừa
+  // cho tới khi người dùng tự kéo/zoom hoặc chọn một ô đất.
+  ['mousedown', 'wheel', 'touchstart'].forEach(ev => mapEl.addEventListener(ev, () => { userMoved = true; }, { passive: true }));
+  const refit = () => {
+    if (userMoved || mapEl.clientWidth === 0 || mapEl.clientHeight === 0) return;
+    fit();
+  };
+  new ResizeObserver(refit).observe(mapEl);
+  refit();
+  window.addEventListener('load', refit);
+  setTimeout(refit, 300);
+  setTimeout(refit, 1200);
+  document.getElementById('subtitle').textContent = `${data.features.length} ô đất · ${CLASSES.__order.length} loại đất`;
+}
+
+document.getElementById('search').addEventListener('input', e => runSearch(e.target.value));
+document.getElementById('allOn').addEventListener('click', () => setAll(true));
+document.getElementById('allOff').addEventListener('click', () => setAll(false));
+document.getElementById('showLabels').addEventListener('change', updateLabels);
+document.getElementById('opacity').addEventListener('input', e => {
+  fillOpacity = e.target.value / 100;
+  if (geoLayer) geoLayer.setStyle(styleOf);
+});
+document.getElementById('toggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
+map.on('zoomend', updateLabels);
+
+// Thử lần lượt từng đường dẫn: data/quyhoach.geojson (bản trên máy) rồi quyhoach.geojson (bản đăng GitHub Pages)
+const loadData = urls => fetch(urls[0])
+  .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .catch(err => urls.length > 1 ? loadData(urls.slice(1)) : Promise.reject(err));
+
+loadData([CONFIG.DATA_URL, 'quyhoach.geojson'])
+  .then(start)
+  .catch(() => {
+    // Mở trực tiếp bằng file:// thì fetch bị chặn -> dùng dữ liệu nhúng sẵn trong data/quyhoach.js
+    if (window.QUYHOACH_DATA) start(window.QUYHOACH_DATA);
+    else document.getElementById('subtitle').textContent = 'Không tải được data/quyhoach.geojson';
+  });
+</script>
+</body>
+</html>
